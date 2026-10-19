@@ -3,6 +3,6 @@
   "height": "q.screen_height/8",
   "autoClear": false,
   "type": "texture",
-  "format": "RGBA8",
+  "format": "RGBA16F",
   "depth": true
 }

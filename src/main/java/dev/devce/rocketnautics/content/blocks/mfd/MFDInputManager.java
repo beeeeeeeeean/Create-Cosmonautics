@@ -14,7 +14,7 @@ import org.lwjgl.glfw.GLFW;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-@EventBusSubscriber
+@EventBusSubscriber(value = Dist.CLIENT)
 public class MFDInputManager {
 
     private static final Set<String> ACTIVE_KEYS = ConcurrentHashMap.newKeySet();

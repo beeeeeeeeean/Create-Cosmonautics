@@ -1,4 +1,4 @@
-#version 450
+#version 410
 
 #include rocketnautics:common_math
 #include veil:space_helper
@@ -33,7 +33,7 @@ vec2 pixelateUV(vec2 uv) {
 }
 
 vec3 brightPass(vec2 uv) {
-    vec3 color = texture(sDiffuse, uv).rgb;
+    vec3 color = clamp(texture(sDiffuse, uv).rgb, 0.0, 1.0);
 
     float lum = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
     float mask = smoothstep(uThreshold, uThreshold + 0.5, lum);
@@ -178,20 +178,23 @@ vec3 halo(vec2 uv, float rMin, float width, float intensity) {
 void main() {
     vec4 col = texture(sDiffuse, texCoord);
 
-    float depth = min(texture(sDiffuseDepthSkybox, lightScreenPos).r, texture(sDiffuseDepthDefault, lightScreenPos).r);
+    float depth = min(texture(sDiffuseDepthDefault, lightScreenPos).r, texture(sDiffuseDepthSkybox, lightScreenPos).r);
     if (depth < 1.0) return;
+
+    vec3 color = clamp(texture(sDiffuse, lightScreenPos).rgb, 0.0, 1.0);
+    float visibility = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
 
     vec3 ghosts = lensGhosts(texCoord);
 
     vec2 pixelUV = pixelateUV(texCoord);
 
-    float rays =
+    vec3 rays = vec3(
           rays(pixelUV, 0.0, 32, 0.8, 1.5, 10.0) * 0.7
         + rays(pixelUV, 2.0, 16, 1.0, 2.0, 5.0) * 0.9
         + rays(pixelUV, 3.0, 64, 2.0, 1.0, 15.0) * 1.2
         + rays(pixelUV, 2.5, 6, 1.0, 2.0, 4.0) * 0.6
         + rays(pixelUV, 0.5, 64, 1.0, 1.0, 10.0) * 0.5
-        + rays(pixelUV, 0.0, 2, 1000.0, 0.0, 9.0) * 5.0;
+        + rays(pixelUV, 0.0, 2, 1000.0, 0.0, 9.0) * 5.0);
 
     vec3 glow = glow(pixelUV, 15.0);
 
@@ -199,10 +202,10 @@ void main() {
     vec3 halo2 = halo(pixelUV, 0.2, 0.3, 0.3);
 
     fragColor = clamp(
-          clamp(vec4(rays) * uIntensity * 0.3 - vec4(brightPass(texCoord), 1.0), 0.0, 1.0)
+          clamp(vec4(rays, 1.0) * uIntensity * 0.3 - vec4(brightPass(texCoord), 1.0), 0.0, 1.0)
         + vec4(ghosts, 1.0) * uIntensity
         + vec4(glow, 1.0) * uIntensity * 2
         + vec4(halo1, 1.0) * uIntensity * 0.2
         + vec4(halo2, 1.0) * uIntensity * 0.2,
-    0.0, 1.0);
+    0.0, 1.0) * visibility;
 }

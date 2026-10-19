@@ -15,6 +15,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
@@ -48,6 +49,7 @@ public class FreeMotionHandler {
         FreeMotionHandler.thrustStrength.put(id, thrustStrength);
     }
 
+    @OnlyIn(Dist.CLIENT)
     @SubscribeEvent
     public static void onRender(RenderFrameEvent.Pre event) {
         Minecraft mc = Minecraft.getInstance();
@@ -78,6 +80,7 @@ public class FreeMotionHandler {
         quat.rotateZ((float) Math.toRadians(currentRoll));
     }
 
+    @OnlyIn(Dist.CLIENT)
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Pre event) {
         Minecraft mc = Minecraft.getInstance();
@@ -134,6 +137,7 @@ public class FreeMotionHandler {
         if (Math.abs(vertical) != 0 ) player.addDeltaMovement(new Vec3(motion).normalize().scale(0.02f));
     }
 
+    @OnlyIn(Dist.CLIENT)
     @SubscribeEvent
     public static void onPlayerRender(net.neoforged.neoforge.client.event.RenderLivingEvent.Pre<?, ?> event) {
         LivingEntity entity = event.getEntity();
@@ -218,12 +222,13 @@ public class FreeMotionHandler {
         if (p.onClimbable()) return false;
 
         if (!(e instanceof FreeMotionEntity fme)) return false;
+
+        Level l = p.level();
         if (!fme.is6DOFEnabled()) {
-            if (e.level().dimension() != DEEP_SPACE) return false;
+            if (l.dimension() != DEEP_SPACE) return false;
             if (p.getAbilities().flying) return false;
         }
 
-        Level l = p.level();
         if (!l.getFluidState(p.blockPosition()).isEmpty()) {
             fme.setAmbulant(false);
             return false;

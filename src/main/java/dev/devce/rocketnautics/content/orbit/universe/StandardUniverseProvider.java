@@ -11,6 +11,7 @@ import dev.devce.rocketnautics.registry.RocketTags;
 import net.minecraft.tags.BiomeTags;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.common.Tags;
+import org.hipparchus.geometry.euclidean.threed.Rotation;
 import org.hipparchus.geometry.euclidean.threed.Vector3D;
 import org.joml.Vector3f;
 
@@ -110,12 +111,12 @@ public final class StandardUniverseProvider {
                 .setAtmosphereFlagsBelow(21_000, EnumSet.of(AtmosphereFlags.DROWNING, AtmosphereFlags.LOW_DENSITY))
                 .setRadius(overworldRadius)
                 .setCircularOrbit(overworldOrbitalYearInOverworldDays * overworldDaynightCycleLengthSeconds, Vector3D.PLUS_J)
-                .setRotationPeriod(Vector3D.MINUS_J, overworldDaynightCycleLengthSeconds)
+                .setRotationPeriod(Vector3D.MINUS_J, overworldDaynightCycleLengthSeconds, new Rotation(Vector3D.MINUS_J, -Math.PI/2, null))
                 .setAtmosphereEnabled(true)
                 .setAtmosphereRadius(1.3f)
                 .setAtmosphereIntensity(1.0f)
                 .setAtmosphereDensityFalloff(4.0f)
-                .setAtmosphereScatteringStrength(0.075f)
+                .setAtmosphereScatteringStrength(20.0f)
                 .setAtmosphereScatteringWavelengths(new Vector3f(700, 520, 440))
                 .setPriority(0);
     }

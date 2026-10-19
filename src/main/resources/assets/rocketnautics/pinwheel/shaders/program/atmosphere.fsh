@@ -1,4 +1,4 @@
-#version 450
+#version 410
 
 #include rocketnautics:common_math
 #include veil:space_helper
@@ -15,72 +15,96 @@ uniform float rAtmosphere;
 uniform vec3 sunDir;
 
 uniform float intensity;
+uniform float opacity;
 
-uniform float densityFalloff;
+uniform float falloff;
 
-uniform vec3 scatteringCoefficients;
+uniform vec3 betaRayleigh;
+uniform vec3 betaMie;
 
 uniform mat4 transform;
 uniform mat4 invTransform;
-
-vec3 planetOrigin = transform[3].xyz;
-float scale = (length(transform[0]) + length(transform[1]) + length(transform[2])) / 3;
+vec3 origin = transform[3].xyz;
 
 uniform float voxelSz;
 
-uniform int numInScatteringPoints;
+uniform int samples;
 
 uniform int depthTest;
+uniform int disableSurfaceCulling;
 
 in vec2 texCoord;
 out vec4 fragColor;
 
 float sampleOpticalDepth(vec3 rO, vec3 rD) {
-    float height = length(rO - planetOrigin) - rPlanet;
-    float altitude = clamp(height / (rAtmosphere - rPlanet), 0.0, 1.0);
+    vec3 p = (invTransform * vec4(rO, 1.0)).xyz;
 
-    float mu = dot(normalize(rO - planetOrigin), rD);
-    float uvX = 0.5 - 0.5 * mu;
+    float h;
+    if (shape == 0) h = length(p) - rPlanet;
+    if (shape == 1) h = max(max(abs(p.x), abs(p.y)), abs(p.z)) - rPlanet;
 
-    return texture(sOpticalDepth, vec2(uvX, altitude)).r * (rAtmosphere - rPlanet);
+    float fAltitude = clamp(h / (rAtmosphere - rPlanet), 0.0, 1.0);
+
+    const float epsilon = 0.01;
+    if (1 - fAltitude < epsilon) return 0;
+
+    float mu = dot(normalize(rO - origin), rD);
+    float uvX = (1.0 - mu) * 0.5;
+
+    return texture(sOpticalDepth, vec2(uvX, fAltitude)).r;
+}
+
+float sampleOpticalDepthSegment(vec3 rO, vec3 rD, float rL) {
+    vec3 endPoint = rO + rD * rL;
+
+    float tauClose = sampleOpticalDepth(rO, rD);
+    float tauFar = sampleOpticalDepth(endPoint, rD);
+
+    return max(tauClose - tauFar, 0.0);
+}
+
+float reyleighPhase(float mu) {
+    return 3.0 / (16.0 * PI) * (1.0 + mu * mu);
+}
+
+float miePhase(float mu, float g) {
+    float g2 = g * g;
+    return 3.0 / (8.0 * PI) * ((1.0 - g2) * (mu*mu + 1.0)) / (pow(1.0 + g2 - 2.0 * mu * g, 1.5) * (2.0 +g2));
 }
 
 vec3 light(vec3 rO, vec3 rD, float rL, vec4 colorIn, mat4 invTransform) {
     if (rL <= 0.0) return colorIn.rgb;
 
-    float stepSz = voxelSz > 0.0 ? voxelSz * scale : rL / float(max(numInScatteringPoints, 1));
+    float stepSz = rL / float(samples);
 
-    int steps = int(ceil(rL / stepSz));
-    steps = max(steps, 1);
-    steps = min(steps, numInScatteringPoints);
+    float mu = dot(rD, sunDir);
+    float rPhase = reyleighPhase(mu);
+    float mPhase = miePhase(mu, 0.3);
 
-    vec3 inScatteredLight = vec3(0.0);
-    float viewRayOpticalDepth = 0.0;
+    vec3 rInScatter = vec3(0.0);
+    vec3 mInScatter = vec3(0.0);
 
-    for (int i = 0; i < steps; i++) {
-        float t0 = float(i) / float(steps);
-        float t1 = float(i + 1) / float(steps);
+    float tauRView = 0.0;
+    for (int i = 0; i < samples; i++) {
+        float t = (float(i) + 0.5) * stepSz;
+        vec3 p = voxelize(rO + rD * t, voxelSz);
 
-        float ds = rL * (t1 - t0);
-        float t = (t0 + t1) * 0.5;
+        float tauRSun = sampleOpticalDepth(p, sunDir);
 
-        vec3 p = rO + rD * (t * rL);
+        float localDensity = densityAtP(shape, p, rAtmosphere, rPlanet, falloff, voxelSz, invTransform);
 
-        float localDensity = densityAtP(shape, p, rAtmosphere, rPlanet, densityFalloff, voxelSz, invTransform);
-        if (localDensity <= 0.0) continue;
+        tauRView = sampleOpticalDepthSegment(rO, rD, stepSz * i);
 
-        float sunRayOpticalDepth = sampleOpticalDepth(p, sunDir);
-        viewRayOpticalDepth += localDensity * ds;
+        vec3 transmittance = exp(-(tauRSun + tauRView) * (betaRayleigh + betaMie));
 
-        vec3 transmittance = exp( -(sunRayOpticalDepth + viewRayOpticalDepth) * scatteringCoefficients);
-
-        inScatteredLight += localDensity * transmittance * ds;
+        rInScatter += localDensity * transmittance * rPhase;
+        mInScatter += localDensity * transmittance * mPhase;
     }
 
-    inScatteredLight *= scatteringCoefficients * intensity;
+    vec3 scattering = (rInScatter * betaRayleigh + mInScatter * betaMie) * intensity * stepSz / rPlanet;
 
-    vec3 inTransmittance = exp(-viewRayOpticalDepth * scatteringCoefficients);
-    return colorIn.rgb * inTransmittance + inScatteredLight;
+    vec3 inTransmittance = exp(-tauRView * (betaRayleigh + betaMie));
+    return colorIn.rgb * inTransmittance + scattering;
 }
 
 void main() {
@@ -92,20 +116,26 @@ void main() {
 
     fragColor = col;
 
-    vec3 terrainPos = screenToWorldSpace(texCoord, depth).xyz;
-    float dstToTerrain = length(terrainPos - rO) * scale;
-
-    float dstToSurface = min(rayShape(shape, rPlanet, invTransform, rO, rD).x, depthTest == 1 ? dstToTerrain : INFINITY);
-    vec2 hitInfo = rayShape(shape, rAtmosphere, invTransform, rO, rD);
-
-    float dstToAtmo = hitInfo.x;
-    float dstThruAtmo = min(hitInfo.y, dstToSurface - dstToAtmo);
-
-    if (dstThruAtmo > 0) {
-        const float epsilon = 0.0001;
-        vec3 pointInAtmo = rO + rD * (dstToAtmo + epsilon);
-        vec3 light = light(pointInAtmo, rD, dstThruAtmo - epsilon * 2, col, invTransform);
-
-        fragColor = vec4(light, 1.0);
+    float dTerrain = INFINITY;
+    if (depthTest == 1 && depth < 1.0) {
+        vec3 pTerrain = screenToWorldSpace(texCoord, depth).xyz;
+        dTerrain = length(pTerrain - rO);
     }
+
+    vec2 hitSurface = rayShape(shape, rPlanet, invTransform, rO, rD);
+    vec2 hitAtmo = rayShape(shape, rAtmosphere, invTransform, rO, rD);
+
+    float dSurface = hitSurface.x;
+    float dSurfaceTerrain = min(dSurface, dTerrain);
+
+    float dAtmo = hitAtmo.x;
+    float dtAtmo = min(hitAtmo.y, dSurfaceTerrain - dAtmo);
+
+    if (dtAtmo > 0) {
+        const float epsilon = 0.0001;
+        vec3 p = rO + rD * (dAtmo + epsilon);
+        fragColor = vec4(light(p, rD, dtAtmo - epsilon * 2, col, invTransform), 1);
+    }
+
+    fragColor = vec4(mix(col.rgb, fragColor.rgb, opacity), 1.0);
 }

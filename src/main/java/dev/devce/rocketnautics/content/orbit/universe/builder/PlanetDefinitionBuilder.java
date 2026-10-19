@@ -139,7 +139,7 @@ public class PlanetDefinitionBuilder {
             this.atmosphereEnabled = planetAtmosphere.get().enabled();
             this.atmosphereRadius = planetAtmosphere.get().radius();
             this.atmosphereIntensity = planetAtmosphere.get().intensity();
-            this.atmosphereDensityFalloff = planetAtmosphere.get().densityFalloff();
+            this.atmosphereDensityFalloff = planetAtmosphere.get().falloff();
             this.atmosphereScatteringStrength = planetAtmosphere.get().scatteringStrength();
             this.atmosphereWavelengths = planetAtmosphere.get().wavelengths();
         }
@@ -147,7 +147,7 @@ public class PlanetDefinitionBuilder {
         if (starProperties.isPresent() && this.star.orElse(false)) {
             this.starRadius = starProperties.get().radius();
             this.starIntensity = starProperties.get().intensity();
-            this.starDensityFalloff = starProperties.get().densityFalloff();
+            this.starDensityFalloff = starProperties.get().falloff();
             this.starColor = starProperties.get().color();
         }
     }

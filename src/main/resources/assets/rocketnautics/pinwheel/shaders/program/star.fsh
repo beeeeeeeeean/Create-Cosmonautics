@@ -1,63 +1,58 @@
-#version 450
+#version 410
 
 #include rocketnautics:common_math
 #include veil:space_helper
 
-uniform int shape;
+uniform int shape; // 0 - sphere, 1 - cube
 
 uniform float rCore;
 uniform float rPlasma;
 
 uniform float intensity;
 
-uniform float densityFalloff;
+uniform float falloff;
 
 uniform vec3 color;
 
 uniform mat4 transform;
 uniform mat4 invTransform;
 
-vec3 starOrigin = transform[3].xyz;
-float scale = (length(transform[0]) + length(transform[1]) + length(transform[2])) / 3;
-
 uniform float voxelSz;
 
-uniform int numInScatteringPoints;
+uniform int samples;
 
 in vec2 texCoord;
 out vec4 fragColor;
 
 vec3 light(vec3 rO, vec3 rD, float rL, mat4 invTransform) {
-    if (rL <= 0.0) return vec3(0);
+    if (rL <= 0.0 || rPlasma <= rCore) return vec3(0.0);
 
-    float stepSz = voxelSz > 0.0 ? voxelSz * scale : rL / float(max(numInScatteringPoints, 1));
+    vec3 ro = (invTransform * vec4(rO, 1.0)).xyz;
+    vec3 rd = (invTransform * vec4(rD, 0.0)).xyz;
 
-    int steps = int(ceil(rL / stepSz));
-    steps = max(steps, 1);
-    steps = min(steps, numInScatteringPoints);
+    float stepSz = rL / float(samples);
+    vec3 accumulated = vec3(0.0);
+    float weight = 0.0;
 
-    float opticalDepth = 0.0;
-    vec3 scatteredLight = vec3(0.0);
+    for (int i = 0; i < samples; i++) {
+        float t = (float(i) + 0.5) * stepSz;
+        vec3 p = voxelize(ro + rd * t, voxelSz);
 
-    for (int i = 0; i < steps; i++) {
-        float t0 = float(i) / float(steps);
-        float t1 = float(i + 1) / float(steps);
+        float d = (shape == 0) ? length(p) : max(max(abs(p.x), abs(p.y)), abs(p.z));
 
-        float ds = rL * (t1 - t0);
-        float t = (t0 + t1) * 0.5;
+        if (d >= rPlasma) continue;
 
-        vec3 p = rO + rD * (t * rL);
+        float localDensity = 1.0;
+        if (d > rCore) {
+            float x = (d - rCore) / (rPlasma - rCore);
+            localDensity = (exp(-falloff * x) - exp(-falloff)) / (1.0 - exp(-falloff));
+        }
 
-        float localDensity = densityAtP(shape, p, rPlasma, rCore, densityFalloff, voxelSz, invTransform);
-        if (localDensity <= 0.0) continue;
-
-        float transmittance = exp(-opticalDepth);
-
-        scatteredLight += color * transmittance * localDensity * ds * intensity;
-        opticalDepth += localDensity * ds;
+        accumulated += color * intensity * localDensity * stepSz;
+        weight += stepSz;
     }
 
-    return scatteredLight;
+    return accumulated / weight;
 }
 
 void main() {
@@ -68,9 +63,9 @@ void main() {
 
     if (hitInfo.y > 0) {
         const float epsilon = 0.0001;
-        vec3 pointInPlasma = rO + rD * (hitInfo.x + epsilon);
-        vec3 light = light(pointInPlasma, rD, hitInfo.y - epsilon * 2, invTransform);
+        vec3 p = rO + rD * (hitInfo.x + epsilon);
+        vec3 light = light(p, rD, hitInfo.y - epsilon * 2, invTransform);
 
-        fragColor = clamp(vec4(light, 1.0), 0.0, 1.0);
+        fragColor = vec4(light, 1.0);
     }
 }

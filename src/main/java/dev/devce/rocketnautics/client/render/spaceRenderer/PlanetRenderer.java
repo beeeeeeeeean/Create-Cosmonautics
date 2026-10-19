@@ -1,6 +1,5 @@
 package dev.devce.rocketnautics.client.render.spaceRenderer;
 
-import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -37,10 +36,11 @@ import java.util.Map;
 import static dev.devce.rocketnautics.client.render.spaceRenderer.UniverseRenderData.*;
 
 public class PlanetRenderer {
-    public static void render(CubePlanet planet, PoseStack ps, Camera camera, Vector3D pos, AbsoluteDate date, Frame frame, float celestialAngle, float pTick) {
+    public static void render(CubePlanet planet, PoseStack ps, Quaternionf rotation, Camera camera, Vector3D pos, AbsoluteDate date, Frame frame, float celestialAngle, float pTick) {
         assert UniverseHelper.UNIVERSE != null;
 
-        RenderTarget renderTarget = Minecraft.getInstance().getMainRenderTarget();
+        ResourceLocation hdrId = ResourceLocation.fromNamespaceAndPath(RocketNautics.MODID, "hdr_fbo");
+        AdvancedFbo HDR_FBO = VeilRenderSystem.renderer().getFramebufferManager().getFramebuffer(hdrId);
 
         if (planetTextures.get(planet.id()) == null) {
             ResourceLocation bakedTex = loadBakedPlanetTexture(planet.frame().getName(), planet.id());
@@ -81,7 +81,7 @@ public class PlanetRenderer {
         boolean isSphere = dev.devce.rocketnautics.RocketConfig.SERVER.planetShape.get() == dev.devce.rocketnautics.RocketConfig.PlanetShape.SPHERE;
 
         if (planet.extras().star()) {
-            StarRenderer.render(planet, isSphere, size, parallaxFactor, camera, date, frame, pos);
+            StarRenderer.render(planet, isSphere, size, parallaxFactor, camera, rotation, date, frame, pos);
             ps.popPose();
             return;
         }
@@ -133,12 +133,12 @@ public class PlanetRenderer {
 
         drawVBO(VBO, scaledMatrix, activeShader, false);
 
-        renderTarget.bindWrite(true);
-        RenderSystem.viewport(0, 0, renderTarget.width, renderTarget.height);
+        HDR_FBO.bind(true);
+        RenderSystem.viewport(0, 0, HDR_FBO.getWidth(), HDR_FBO.getHeight());
 
         RenderSystem.disableDepthTest();
         RenderSystem.depthMask(false);
-        RenderSystem.blendFunc(GlStateManager.SourceFactor.SRC_ALPHA, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA);
+        RenderSystem.blendFuncSeparate(GlStateManager.SourceFactor.SRC_ALPHA, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA, GlStateManager.SourceFactor.ONE, GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA);
 
         ResourceLocation compositeId = ResourceLocation.fromNamespaceAndPath(RocketNautics.MODID, "composite");
         ShaderProgram composite = VeilRenderSystem.setShader(compositeId);
@@ -149,7 +149,7 @@ public class PlanetRenderer {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, planetFBO.getColorTextureAttachment(0).getId());
             composite.getUniformSafe("sComposite").setInt(0);
 
-            composite.getUniformSafe("uResolution").setVector(new Vector2f(renderTarget.width, renderTarget.height));
+            composite.getUniformSafe("uResolution").setVector(new Vector2f(HDR_FBO.getWidth(), HDR_FBO.getHeight()));
 
             GL30.glBindVertexArray(FULLSCREEN_VAO);
             GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 3);
@@ -180,7 +180,6 @@ public class PlanetRenderer {
             ShaderProgram shader = VeilRenderSystem.setShader(shaderId);
             if (shader != null) {
                 shader.getUniformSafe("uLightDir").setVector(light);
-
                 drawVBO(VBO, shadowMatrix, VeilRenderBridge.toShaderInstance(shader), false);
             }
         }
@@ -203,16 +202,24 @@ public class PlanetRenderer {
                             (ByteBuffer)null
                     );
 
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D,
+                            GL11.GL_TEXTURE_WRAP_S,
+                            GL12.GL_CLAMP_TO_EDGE);
+
+                    GL11.glTexParameteri(GL11.GL_TEXTURE_2D,
+                            GL11.GL_TEXTURE_WRAP_T,
+                            GL12.GL_CLAMP_TO_EDGE);
+
                     GL11.glTexParameteri(
                             GL11.GL_TEXTURE_2D,
                             GL11.GL_TEXTURE_MIN_FILTER,
-                            GL11.GL_NEAREST
+                            GL11.GL_LINEAR
                     );
 
                     GL11.glTexParameteri(
                             GL11.GL_TEXTURE_2D,
                             GL11.GL_TEXTURE_MAG_FILTER,
-                            GL11.GL_NEAREST
+                            GL11.GL_LINEAR
                     );
 
                     GL42.glBindImageTexture(0, tex, 0, false, 0, GL15.GL_WRITE_ONLY, GL30.GL_R32F);
@@ -221,13 +228,11 @@ public class PlanetRenderer {
 
                     kernel.getUniformSafe("shape").setInt(isSphere ? 0 : 1);
 
-                    kernel.getUniformSafe("rAtmosphere").setFloat(planet.atmosphere().radius());
-                    kernel.getUniformSafe("densityFalloff").setFloat(planet.atmosphere().densityFalloff());
-
-                    kernel.getUniformSafe("voxelSz").setFloat(isSphere ? 0 : 8.0f);
+                    kernel.getUniformSafe("fAtmosphere").setFloat(1.5f);
+                    kernel.getUniformSafe("falloff").setFloat(/*planet.atmosphere().falloff()*/ 4.0f);
 
                     kernel.getUniformSafe("texSz").setInt(texSz);
-                    kernel.getUniformSafe("numOutScatteringPoints").setInt(10);
+                    kernel.getUniformSafe("samples").setInt(100);
 
 
 
@@ -236,7 +241,7 @@ public class PlanetRenderer {
 
                     GL43.glDispatchCompute(groupsX, groupsY, 1);
 
-                    GL42.glMemoryBarrier(GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                    GL42.glMemoryBarrier(GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
 
                     ShaderProgram.unbind();
 
@@ -259,11 +264,11 @@ public class PlanetRenderer {
                     shader.bind();
 
                     RenderSystem.activeTexture(GL13.GL_TEXTURE0);
-                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, renderTarget.getColorTextureId());
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, HDR_FBO.getColorTextureAttachment(0).getId());
                     shader.getUniformSafe("sDiffuse").setInt(0);
 
                     RenderSystem.activeTexture(GL13.GL_TEXTURE1);
-                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, renderTarget.getDepthTextureId());
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, HDR_FBO.getDepthTextureAttachment().getId());
                     shader.getUniformSafe("sDiffuseDepth").setInt(1);
 
                     RenderSystem.activeTexture(GL13.GL_TEXTURE2);
@@ -272,21 +277,24 @@ public class PlanetRenderer {
 
                     shader.getUniformSafe("shape").setInt(isSphere ? 0 : 1);
 
-                    shader.getUniformSafe("rPlanet").setFloat(100);
-                    shader.getUniformSafe("rAtmosphere").setFloat(100*planet.atmosphere().radius());
+                    shader.getUniformSafe("rPlanet").setFloat(100*size);
+                    shader.getUniformSafe("rAtmosphere").setFloat(100*size * 1.5f);
 
                     shader.getUniformSafe("sunDir").setVector(lightDir);
-                    shader.getUniformSafe("intensity").setFloat(planet.atmosphere().intensity());
-                    shader.getUniformSafe("densityFalloff").setFloat(planet.atmosphere().densityFalloff());
 
-                    float scatteringStrength = planet.atmosphere().scatteringStrength();
+                    shader.getUniformSafe("intensity").setFloat(0.001f);
+                    shader.getUniformSafe("opacity").setFloat(1.0f);
+
+                    shader.getUniformSafe("falloff").setFloat(/*planet.atmosphere().falloff()*/ 4.0f);
+
                     Vector3f wavelengths = planet.atmosphere().wavelengths();
                     Vector3f scatteringCoefficients = new Vector3f(
                             (float)Math.pow(400 / wavelengths.x, 4),
                             (float)Math.pow(400 / wavelengths.y, 4),
                             (float)Math.pow(400 / wavelengths.z, 4)
-                    ).mul(scatteringStrength);
-                    shader.getUniformSafe("scatteringCoefficients").setVector(scatteringCoefficients);
+                    ).mul(/*planet.atmosphere().scatteringStrength()*/ 80);
+                    shader.getUniformSafe("betaRayleigh").setVector(scatteringCoefficients);
+                    shader.getUniformSafe("betaMie").setVector(new Vector3f(4.0e-10f));
 
                     Matrix4f transform = new Matrix4f()
                             .translate(new Vector3f(
@@ -295,16 +303,17 @@ public class PlanetRenderer {
                                     -(float)pos.getZ()
                             ).mul(parallaxFactor*100).add(camera.getPosition().toVector3f()))
                             .rotate(DeepSpaceHelper.adapt(planet.getRotationAtTime(date)).get(new Quaternionf()))
-                            .scale(size);
+                            .rotate(rotation);
                     Matrix4f invTransform = new Matrix4f(transform).invert();
                     shader.getUniformSafe("transform").setMatrix(transform);
                     shader.getUniformSafe("invTransform").setMatrix(invTransform);
 
-                    shader.getUniformSafe("voxelSz").setFloat(isSphere ? 0 : 8.0f);
+                    shader.getUniformSafe("voxelSz").setFloat(isSphere ? 0 : 64.0f);
 
-                    shader.getUniformSafe("numInScatteringPoints").setInt(10);
+                    shader.getUniformSafe("samples").setInt(10);
 
                     shader.getUniformSafe("depthTest").setInt(0);
+                    shader.getUniformSafe("disableBacksideCulling").setInt(0);
 
                     GL30.glBindVertexArray(FULLSCREEN_VAO);
                     GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 3);
@@ -313,18 +322,18 @@ public class PlanetRenderer {
                     ShaderProgram.unbind();
 
                     GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, atmosphereFBO.getId());
-                    GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, renderTarget.frameBufferId);
+                    GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, HDR_FBO.getId());
 
                     GL30.glBlitFramebuffer(
                             0, 0,
                             atmosphereFBO.getWidth(), atmosphereFBO.getHeight(),
                             0, 0,
-                            renderTarget.width, renderTarget.height,
+                            HDR_FBO.getWidth(), HDR_FBO.getHeight(),
                             GL11.GL_COLOR_BUFFER_BIT,
                             GL11.GL_NEAREST
                     );
 
-                    GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, renderTarget.frameBufferId);
+                    GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, HDR_FBO.getId());
                 }
             }
         }

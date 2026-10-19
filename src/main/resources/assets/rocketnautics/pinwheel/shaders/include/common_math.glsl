@@ -1,7 +1,7 @@
-#version 450
+#version 410
 
 const float INFINITY = 1.0 / 0.0;
-    const float PI = 3.14159265359;
+const float PI = 3.14159265359;
 
 float sdBox(vec3 p, vec3 b) {
     vec3 q = abs(p) - b;
@@ -13,20 +13,21 @@ vec3 voxelize(vec3 p, float voxelSz) {
     return floor(p / voxelSz) * voxelSz + voxelSz * 0.5;
 }
 
-float densityAtP(int shape, vec3 pDensitySample, float rAtmosphere, float rPlanet, float densityFalloff, float voxelSz, mat4 invTransform) {
-    vec3 pLocal = (invTransform * vec4(pDensitySample, 1.0)).xyz;
+float densityAtP(int shape, vec3 sDensity, float rAtmosphere, float rPlanet, float falloff, float voxelSz, mat4 invTransform) {
+    vec3 pLocal = (invTransform * vec4(sDensity, 1.0)).xyz;
     pLocal = voxelize(pLocal, voxelSz);
 
     float distanceToSurface = 0;
-
     if (shape == 0) distanceToSurface = length(pLocal) - rPlanet;
     if (shape == 1) distanceToSurface = sdBox(pLocal, vec3(rPlanet));
 
-    float height = distanceToSurface / (rAtmosphere - rPlanet);
+    float thickness = rAtmosphere - rPlanet;
+    float h = max(distanceToSurface, 0.0);
 
-    float localDensity = exp(densityFalloff * -height) / (rAtmosphere - rPlanet);
+    float fAltitude = clamp(h / thickness, 0.0, 1.0);
 
-    return max(0.0, localDensity);
+    float topDensity = exp(-falloff);
+    return (exp(-falloff * fAltitude) - topDensity) / (1.0 - topDensity);
 }
 
 //return distance to first intersection, then distance to second from first
@@ -68,15 +69,15 @@ vec2 rayCube(float hSz, mat4 invTransform, vec3 rO, vec3 rD) {
     vec3 tMin = min(t1, t2);
     vec3 tMax = max(t1, t2);
 
-    float dstNear = max(max(tMin.x, tMin.y), tMin.z);
-    float dstFar  = min(min(tMax.x, tMax.y), tMax.z);
+    float dNear = max(max(tMin.x, tMin.y), tMin.z);
+    float dFar  = min(min(tMax.x, tMax.y), tMax.z);
 
-    if (dstFar < max(dstNear, 0.0))
+    if (dFar < max(dNear, 0.0))
     return vec2(INFINITY, 0.0);
 
-    dstNear = max(dstNear, 0.0);
+    dNear = max(dNear, 0.0);
 
-    return vec2(dstNear, dstFar - dstNear);
+    return vec2(dNear, dFar - dNear);
 }
 
 vec2 rayShape(int shape, float sz, mat4 invTransform, vec3 rO, vec3 rD) {

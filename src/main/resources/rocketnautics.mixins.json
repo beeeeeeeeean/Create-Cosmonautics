@@ -38,7 +38,8 @@
     "CameraMixin",
     "PlayerRendererMixin",
     "MouseHandlerMixin",
-    "PlayerModelMixin"
+    "PlayerModelMixin",
+    "FogRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

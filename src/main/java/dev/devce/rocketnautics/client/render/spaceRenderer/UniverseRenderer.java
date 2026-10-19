@@ -4,10 +4,12 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import dev.devce.rocketnautics.RocketConfig;
 import dev.devce.rocketnautics.api.orbit.DeepSpaceHelper;
 import dev.devce.rocketnautics.content.orbit.universe.CubePlanet;
+import dev.devce.rocketnautics.content.orbit.universe.PlanetDimensionData;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import org.hipparchus.geometry.euclidean.threed.Vector3D;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.orekit.frames.Frame;
 import org.orekit.time.AbsoluteDate;
@@ -21,6 +23,7 @@ public class UniverseRenderer {
                               PoseStack ps,
                               float dTick, float pTick,
                               @Nullable Vector3D pos, @Nullable Frame frame,
+                              Quaternionf rotation,
                               AbsoluteDate date,
                               Camera camera) {
         assert UniverseHelper.UNIVERSE != null;
@@ -30,10 +33,22 @@ public class UniverseRenderer {
 
         ps.pushPose();
 
-        float vis = 1.0f;
+        ps.mulPose(rotation);
+
+        boolean isDeepSpace = DeepSpaceHelper.isDeepSpace(mc.level);
+
         float angle = mc.level.getTimeOfDay(dTick);
 
-        SkyboxRenderer.render(ps, camera, vis, angle);
+        float planetSkyboxVisibilty = Math.min(
+            Math.clamp((angle - 0.1f) / 0.3f, 0.1f, 1),
+            Math.clamp((0.9f - angle) / 0.3f, 0.1f, 1)
+        );
+
+        float heightFactor = 1.0f - Math.clamp((1000.0f - (float)camera.getPosition().y - 63.0f)/1000.0f, 0.0f, 1.0f);
+
+        float vis = isDeepSpace || Objects.requireNonNull(exclude).atmosphere() == null ? 1.0f : planetSkyboxVisibilty + (1.0f - planetSkyboxVisibilty) * heightFactor;
+
+        SkyboxRenderer.render(ps, vis, angle);
 
         UniverseRenderData.buildVBOs();
         UniverseRenderData.buildVAOs();
@@ -61,31 +76,30 @@ public class UniverseRenderer {
                 .toList()
                 .reversed();
 
-        boolean isDeepSpace = DeepSpaceHelper.isDeepSpace(mc.level);
-
-        // TODO: fix planet position and remove temporary check
-        if (isDeepSpace) {
-            for (Planet pl : planets) {
-                if (exclude != null) {
-                    if (pl.planet.id() == exclude.id()) continue;
-                    if (!isDeepSpace && !RocketConfig.CLIENT.enableCustomSky.get() && !Objects.requireNonNull(exclude.linkedDimension()).renderUniverseInDimension()) continue;
-                }
-
-                Vector3f p = new Vector3f((float)pl.pos.getX(), (float)pl.pos.getY(), (float)pl.pos.getZ());
-                Vector3f toTarget = camera.getPosition().toVector3f().sub(p).normalize();
-                Vector3f forward = new Vector3f(0, 0, -1)
-                        .rotate(camera.rotation())
-                        .normalize();
-
-                float alignment = Math.clamp((forward.dot(toTarget) + 1.0f) * 0.5f, 0.0f, 1.0f);
-                float fov = mc.options.fov().get() / 180.0f;
-
-                if (alignment < 1 - fov && pl.distSq > 5*10e13f) continue;
-
-                ps.pushPose();
-                PlanetRenderer.render(pl.planet, ps, camera, pl.pos, date, frame, angle, pTick);
-                ps.popPose();
+        for (Planet pl : planets) {
+            if (exclude != null) {
+                if (pl.planet.id() == exclude.id()) continue;
+                PlanetDimensionData linkedDimension = exclude.linkedDimension();
+                if (!isDeepSpace && !RocketConfig.CLIENT.enableCustomSky.get() && linkedDimension != null && !linkedDimension.renderUniverseInDimension()) continue;
             }
+
+            Vector3f p = new Vector3f((float)pl.pos.getX(), (float)pl.pos.getY(), (float)pl.pos.getZ()).rotate(rotation);
+
+            if (pl.planet.extras().star()) AtmosphereRenderer.updateLightDirection(new Vector3f(p).negate().normalize());
+
+            Vector3f toTarget = camera.getPosition().toVector3f().sub(p).normalize();
+            Vector3f forward = new Vector3f(0, 0, -1)
+                    .rotate(camera.rotation())
+                    .normalize();
+
+            float alignment = Math.clamp((forward.dot(toTarget) + 1.0f) * 0.5f, 0.0f, 1.0f);
+            float fov = mc.options.fov().get() / 180.0f;
+
+            if (alignment < 1 - fov && pl.distSq > 5*10e13f) continue;
+
+            ps.pushPose();
+            PlanetRenderer.render(pl.planet, ps, rotation, camera, pl.pos, date, frame, angle, pTick);
+            ps.popPose();
         }
 
         ps.popPose();

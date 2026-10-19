@@ -113,7 +113,7 @@ public class SkyHandler {
 
                     pipeline.getUniformSafe("intensity").setFloat(500000.0f);
 
-                    pipeline.getUniformSafe("densityFalloff").setFloat(1.0f);
+                    pipeline.getUniformSafe("falloff").setFloat(1.0f);
 
                     float scatteringStrength = 0.003f;
                     Vector3f wavelengths = new Vector3f(700, 560, 480);
@@ -131,7 +131,7 @@ public class SkyHandler {
 
                     pipeline.getUniformSafe("voxelSz").setFloat(0f);
 
-                    pipeline.getUniformSafe("numInScatteringPoints").setInt(32);
+                    pipeline.getUniformSafe("samples").setInt(32);
                     pipeline.getUniformSafe("numOpticalDepthPoints").setInt(16);
 
                     pipeline.getUniformSafe("debug").setInt(1);
